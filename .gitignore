@@ -204,3 +204,8 @@ __marimo__/
 
 # System prompt (user-specific)
 system_prompt.txt
+
+google-service_account.json
+
+# Voice cloning key (user-specific)
+voice_cloning_key.txt

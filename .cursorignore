@@ -1,2 +1,4 @@
 .env
 system_prompt.txt
+google-service_account.json
+voice_cloning_key.txt

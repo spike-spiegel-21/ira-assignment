@@ -25,10 +25,11 @@ from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.stt import OpenAISTTService
-from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
+from pipecat.services.google.tts import GoogleTTSService
+from pipecat.transcriptions.language import Language
 
 load_dotenv(override=True)
 
@@ -38,6 +39,17 @@ def load_system_prompt() -> str:
     prompt_file = Path(__file__).parent / "system_prompt.txt"
     with open(prompt_file, "r", encoding="utf-8") as f:
         return f.read().strip()
+
+
+def load_voice_cloning_key() -> str:
+    """Load voice cloning key from voice_cloning_key.txt file."""
+    key_file = Path(__file__).parent / "voice_cloning_key.txt"
+    try:
+        with open(key_file, "r", encoding="utf-8") as f:
+            key = f.read().strip()
+            return key if key else None
+    except FileNotFoundError:
+        return None
 
 # We store functions so objects (e.g. SileroVADAnalyzer) don't get
 # instantiated. The function will be called when the desired transport gets
@@ -66,7 +78,32 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         model="gpt-4o-transcribe",
     )
 
-    tts = OpenAITTSService(api_key=os.getenv("OPENAI_API_KEY"), voice="ballad")
+    # Google Cloud TTS with Chirp 3 voice cloning
+    voice_cloning_key = load_voice_cloning_key()
+    
+    # Read Google credentials from file path
+    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    credentials_content = None
+    if credentials_path:
+        try:
+            with open(credentials_path, "r", encoding="utf-8") as f:
+                credentials_content = f.read()
+        except FileNotFoundError:
+            logger.warning(f"Google credentials file not found: {credentials_path}")
+    
+    tts_kwargs = {
+        "voice_id": "en-US-Chirp3-HD-Charon",
+        "params": GoogleTTSService.InputParams(language=Language.EN_US),
+    }
+    
+    if credentials_content:
+        tts_kwargs["credentials"] = credentials_content
+    
+    # Add voice cloning key if available
+    if voice_cloning_key:
+        tts_kwargs["voice_cloning_key"] = voice_cloning_key
+    
+    tts = GoogleTTSService(**tts_kwargs)
 
     llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"))
 
