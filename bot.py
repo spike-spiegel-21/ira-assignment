@@ -33,6 +33,26 @@ from pipecat.transcriptions.language import Language
 
 load_dotenv(override=True)
 
+# Setup Langfuse tracing if enabled
+if os.getenv("ENABLE_TRACING", "false").lower() == "true":
+    try:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from pipecat.utils.tracing.setup import setup_tracing
+
+        # Initialize the OTLP exporter
+        exporter = OTLPSpanExporter()
+
+        # Set up tracing with the exporter
+        setup_tracing(
+            service_name="pipecat-quickstart",
+            exporter=exporter,
+        )
+        logger.info("Langfuse tracing enabled")
+    except ImportError as e:
+        logger.warning(f"Failed to import tracing dependencies: {e}. Tracing will be disabled.")
+    except Exception as e:
+        logger.warning(f"Failed to setup tracing: {e}. Tracing will be disabled.")
+
 
 def load_system_prompt() -> str:
     """Load system prompt from system_prompt.txt file."""
@@ -129,6 +149,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         ]
     )
 
+    # Enable tracing if ENABLE_TRACING is set
+    enable_tracing = os.getenv("ENABLE_TRACING", "false").lower() == "true"
+    
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
@@ -136,6 +159,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
+        enable_tracing=enable_tracing,
         idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
     )
 
