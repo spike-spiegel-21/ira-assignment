@@ -6,6 +6,7 @@
 
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -30,6 +31,13 @@ from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 
 load_dotenv(override=True)
+
+
+def load_system_prompt() -> str:
+    """Load system prompt from system_prompt.txt file."""
+    prompt_file = Path(__file__).parent / "system_prompt.txt"
+    with open(prompt_file, "r", encoding="utf-8") as f:
+        return f.read().strip()
 
 # We store functions so objects (e.g. SileroVADAnalyzer) don't get
 # instantiated. The function will be called when the desired transport gets
@@ -66,7 +74,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     messages = [
         {
             "role": "system",
-            "content": "You are very knowledgable about dogs. Your output will be spoken aloud, so avoid special characters that can't easily be spoken, such as emojis or bullet points. Respond to what the user said in a creative and helpful way.",
+            "content": load_system_prompt(),
         },
     ]
 
