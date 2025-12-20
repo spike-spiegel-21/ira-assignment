@@ -33,25 +33,27 @@ from pipecat.transcriptions.language import Language
 
 load_dotenv(override=True)
 
-# Setup Langfuse tracing if enabled
-if os.getenv("ENABLE_TRACING", "false").lower() == "true":
-    try:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from pipecat.utils.tracing.setup import setup_tracing
+# Setup OpenTelemetry tracing (always enabled if dependencies are available)
+try:
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from pipecat.utils.tracing.setup import setup_tracing
 
-        # Initialize the OTLP exporter
-        exporter = OTLPSpanExporter()
+    # Initialize the OTLP exporter
+    exporter = OTLPSpanExporter(
+        endpoint="http://localhost:4317",
+        insecure=True,
+    )
 
-        # Set up tracing with the exporter
-        setup_tracing(
-            service_name="pipecat-quickstart",
-            exporter=exporter,
-        )
-        logger.info("Langfuse tracing enabled")
-    except ImportError as e:
-        logger.warning(f"Failed to import tracing dependencies: {e}. Tracing will be disabled.")
-    except Exception as e:
-        logger.warning(f"Failed to setup tracing: {e}. Tracing will be disabled.")
+    # Set up tracing with the exporter
+    setup_tracing(
+        service_name="pipecat-quickstart-bot",
+        exporter=exporter,
+    )
+    logger.info("OpenTelemetry tracing enabled")
+except ImportError as e:
+    logger.warning(f"Failed to import tracing dependencies: {e}. Tracing will be disabled.")
+except Exception as e:
+    logger.warning(f"Failed to setup tracing: {e}. Tracing will be disabled.")
 
 
 def load_system_prompt() -> str:
@@ -96,6 +98,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     stt = OpenAISTTService(
         api_key=os.getenv("OPENAI_API_KEY"),
         model="gpt-4o-transcribe",
+        language=Language.HI_IN,
     )
 
     # Google Cloud TTS with Chirp 3 voice cloning
@@ -148,9 +151,6 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             context_aggregator.assistant(),  # Assistant spoken responses
         ]
     )
-
-    # Enable tracing if ENABLE_TRACING is set
-    enable_tracing = os.getenv("ENABLE_TRACING", "false").lower() == "true"
     
     task = PipelineTask(
         pipeline,
@@ -159,7 +159,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
-        enable_tracing=enable_tracing,
+        enable_tracing=True,
         idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
     )
 

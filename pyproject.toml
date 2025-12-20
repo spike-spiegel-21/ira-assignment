@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     "pipecat-ai[webrtc,daily,silero,deepgram,openai,cartesia,google,local-smart-turn-v3,runner,tracing]",
     "pipecat-ai-cli",
-    "opentelemetry-exporter-otlp-proto-http"
+    "opentelemetry-exporter-otlp-proto-grpc"
 ]
 
 [dependency-groups]
