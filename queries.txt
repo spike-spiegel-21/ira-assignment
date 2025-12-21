@@ -1,0 +1,130 @@
+# This file contains clickhouse queries for the signoz dashboard.  
+
+########## LLM TTFT (Time series query) ##########
+
+WITH __resource_filter AS (
+    SELECT fingerprint
+    FROM signoz_traces.distributed_traces_v3_resource
+    WHERE seen_at_ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
+          AND toUInt64(toUnixTimestamp(now()))
+)
+SELECT 
+    toStartOfInterval(timestamp, INTERVAL 1 SECOND) AS ts,
+    attributes_number['metrics.ttfb'] AS value
+FROM 
+    signoz_traces.distributed_signoz_index_v3
+WHERE 
+    resource_fingerprint GLOBAL IN __resource_filter AND
+    timestamp BETWEEN toStartOfDay(now()) AND now() AND
+    ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
+                     AND toUInt64(toUnixTimestamp(now())) AND
+    attributes_string['gen_ai.operation.name'] = 'chat' AND
+    has(attributes_number, 'metrics.ttfb')
+ORDER BY ts ASC;
+
+
+
+
+########## TTS TTFB (Summary query) ##########
+
+WITH __resource_filter AS (
+    SELECT fingerprint
+    FROM signoz_traces.distributed_traces_v3_resource
+    WHERE seen_at_ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
+          AND toUInt64(toUnixTimestamp(now()))
+)
+SELECT 
+    toStartOfInterval(timestamp, INTERVAL 1 SECOND) AS ts,
+    attributes_number['metrics.ttfb'] AS value
+FROM 
+    signoz_traces.distributed_signoz_index_v3
+WHERE 
+    resource_fingerprint GLOBAL IN __resource_filter AND
+    timestamp BETWEEN toStartOfDay(now()) AND now() AND
+    ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
+                     AND toUInt64(toUnixTimestamp(now())) AND
+    attributes_string['gen_ai.operation.name'] = 'tts' AND
+    has(attributes_number, 'metrics.ttfb')
+ORDER BY ts ASC;
+
+
+########## STT TTFB (Time series query) ##########
+
+
+WITH __resource_filter AS (
+    SELECT fingerprint
+    FROM signoz_traces.distributed_traces_v3_resource
+    WHERE seen_at_ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
+          AND toUInt64(toUnixTimestamp(now()))
+)
+SELECT 
+    toStartOfInterval(timestamp, INTERVAL 1 SECOND) AS ts,
+    attributes_number['metrics.ttfb'] AS value
+FROM 
+    signoz_traces.distributed_signoz_index_v3
+WHERE 
+    resource_fingerprint GLOBAL IN __resource_filter AND
+    timestamp BETWEEN toStartOfDay(now()) AND now() AND
+    ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
+                     AND toUInt64(toUnixTimestamp(now())) AND
+    attributes_string['gen_ai.operation.name'] = 'stt' AND
+    has(attributes_number, 'metrics.ttfb')
+ORDER BY ts ASC;
+
+########## Bot-speaking to User-speaking Time Gap (Frequency Histogram) ##########
+
+WITH __resource_filter AS (
+    SELECT fingerprint
+    FROM signoz_traces.distributed_traces_v3_resource
+    WHERE seen_at_ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp
+),
+bot_speaking AS (
+    SELECT
+        span_id,
+        timestamp,
+        trace_id,
+        attributes_number['speaking.end_time'] AS bot_end_time
+    FROM signoz_traces.distributed_signoz_index_v3
+    WHERE
+        resource_fingerprint GLOBAL IN __resource_filter AND
+        timestamp BETWEEN {{.start_datetime}} AND {{.end_datetime}} AND
+        ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp AND
+        parent_span_id = '8414a13ca8cbe36f' AND
+        attributes_string['event.type'] = 'bot_speaking' AND
+        attributes_number['speaking.end_time'] IS NOT NULL
+),
+user_speaking AS (
+    SELECT
+        span_id,
+        timestamp,
+        trace_id,
+        attributes_number['speaking.start_time'] AS user_start_time
+    FROM signoz_traces.distributed_signoz_index_v3
+    WHERE
+        resource_fingerprint GLOBAL IN __resource_filter AND
+        timestamp BETWEEN {{.start_datetime}} AND {{.end_datetime}} AND
+        ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp AND
+        parent_span_id = '8414a13ca8cbe36f' AND
+        attributes_string['event.type'] = 'user_speaking' AND
+        attributes_number['speaking.start_time'] IS NOT NULL
+),
+matched_spans AS (
+    SELECT
+        bot.timestamp AS ts,
+        bot.span_id AS bot_span_id,
+        user.span_id AS user_span_id,
+        bot.bot_end_time,
+        user.user_start_time,
+        toFloat64(user.user_start_time - bot.bot_end_time) AS time_gap,
+        ROW_NUMBER() OVER (PARTITION BY bot.span_id ORDER BY user.user_start_time ASC) AS rn
+    FROM bot_speaking AS bot
+    INNER JOIN user_speaking AS user
+        ON bot.trace_id = user.trace_id
+        AND user.user_start_time > bot.bot_end_time
+)
+SELECT
+    ts,
+    time_gap AS value
+FROM matched_spans
+WHERE rn = 1
+ORDER BY ts ASC;
