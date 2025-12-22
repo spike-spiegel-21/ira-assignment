@@ -8,6 +8,7 @@ dependencies = [
     "pipecat-ai-cli",
     "opentelemetry-exporter-otlp-proto-grpc",
     "langchain>=1.2.0",
+    "mem0ai>=1.0.1",
 ]
 
 [dependency-groups]
