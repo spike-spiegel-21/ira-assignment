@@ -45,6 +45,7 @@ from tracer import V2VSpeakingTracer
 
 load_dotenv(override=True)
 
+USER_NAME = "Mayank"
 
 class MemoryContextManager(FrameProcessor):
     """
@@ -339,7 +340,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"))
 
     # Load system prompt
-    system_prompt = load_system_prompt()
+    system_prompt = load_system_prompt().replace("{user_name}", USER_NAME)
     
     # Initialize AsyncConversationMemory for context management
     # Token limit of 500 allows ~25-30 messages before summarization kicks in

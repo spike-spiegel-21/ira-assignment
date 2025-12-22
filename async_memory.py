@@ -356,31 +356,30 @@ Focus on actionable information and context needed to continue the conversation.
     
     def get_context_for_llm(self, system_prompt: Optional[str] = None) -> List[dict]:
         """
-        Get context formatted for LLM, optionally with a system prompt prepended.
+        Get context formatted for LLM, optionally with a system prompt.
+        
+        If the system prompt contains `{history_summary}`, the summary will be
+        interpolated into that position. Otherwise, no separate summary message
+        is added.
         
         This returns messages in the format expected by LLMContext:
-        1. System prompt (if provided)
-        2. Summary as system message (if exists)
-        3. Recent messages within token limit
+        1. System prompt with {history_summary} interpolated (if provided)
+        2. Recent messages within token limit
         
         Args:
-            system_prompt: Optional system prompt to prepend
+            system_prompt: Optional system prompt with {history_summary} placeholder
             
         Returns:
             List of message dicts ready for LLMContext.set_messages()
         """
         result: List[dict] = []
         
-        # Add system prompt first if provided
+        # Add system prompt with interpolated summary
         if system_prompt:
-            result.append({"role": "system", "content": system_prompt})
-        
-        # Add summary as system message if it exists
-        if self._summary:
-            result.append({
-                "role": "system", 
-                "content": f"Previous conversation summary:\n{self._summary}"
-            })
+            # Interpolate {history_summary} with actual summary or empty string
+            summary_text = self._summary if self._summary else "No previous conversation history."
+            interpolated_prompt = system_prompt.replace("{history_summary}", summary_text)
+            result.append({"role": "system", "content": interpolated_prompt})
         
         # Add recent messages
         for msg in self._messages:
