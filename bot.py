@@ -7,6 +7,9 @@
 
 import os
 import asyncio
+import json
+import wave
+import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -39,6 +42,7 @@ from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.services.google.tts import GoogleTTSService
 from pipecat.transcriptions.language import Language
+from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 
 from async_memory import AsyncConversationMemory, ChatMessage, MessageRole
 from tracer import V2VSpeakingTracer
@@ -46,6 +50,89 @@ from tracer import V2VSpeakingTracer
 load_dotenv(override=True)
 
 USER_NAME = "Mayank"
+
+# Create recordings directory
+RECORDINGS_DIR = Path(__file__).parent / "recordings"
+RECORDINGS_DIR.mkdir(exist_ok=True)
+
+
+class ConversationLogger:
+    """
+    Handles logging of conversation messages to JSON and audio files with turn-based naming.
+    """
+    
+    def __init__(self, session_id: Optional[str] = None):
+        """
+        Initialize the conversation logger.
+        
+        Args:
+            session_id: Optional session ID for file naming. If not provided, uses timestamp.
+        """
+        self.session_id = session_id or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.session_dir = RECORDINGS_DIR / self.session_id
+        self.session_dir.mkdir(exist_ok=True)
+        
+        self.messages: list[dict] = []
+        self.user_turn_count = 0
+        self.bot_turn_count = 0
+        self.json_file = self.session_dir / "conversation.json"
+        
+        logger.info(f"ConversationLogger initialized. Session: {self.session_id}")
+    
+    def add_message(self, role: str, content: str):
+        """Add a message to the conversation log."""
+        message = {
+            "role": role,
+            "content": content,
+            "timestamp": datetime.datetime.now().isoformat(),
+        }
+        
+        if role == "user":
+            self.user_turn_count += 1
+            message["turn"] = f"user_turn_{self.user_turn_count}"
+        elif role == "assistant":
+            self.bot_turn_count += 1
+            message["turn"] = f"bot_turn_{self.bot_turn_count}"
+        
+        self.messages.append(message)
+        self._save_json()
+        logger.debug(f"ConversationLogger: Added {role} message (turn: {message.get('turn', 'N/A')})")
+    
+    def _save_json(self):
+        """Save messages to JSON file."""
+        conversation_data = {
+            "session_id": self.session_id,
+            "start_time": self.messages[0]["timestamp"] if self.messages else None,
+            "last_update": datetime.datetime.now().isoformat(),
+            "total_user_turns": self.user_turn_count,
+            "total_bot_turns": self.bot_turn_count,
+            "messages": self.messages,
+        }
+        with open(self.json_file, "w", encoding="utf-8") as f:
+            json.dump(conversation_data, f, indent=2, ensure_ascii=False)
+    
+    def save_audio(self, audio_data: bytes, sample_rate: int, num_channels: int, role: str, turn_number: int):
+        """Save audio data to a WAV file with turn-based naming."""
+        filename = f"{role}_turn_{turn_number}.wav"
+        filepath = self.session_dir / filename
+        
+        with wave.open(str(filepath), "wb") as wf:
+            wf.setnchannels(num_channels)
+            wf.setsampwidth(2)  # 16-bit audio
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio_data)
+        
+        logger.info(f"ConversationLogger: Saved audio to {filepath}")
+        return filepath
+    
+    def get_current_user_turn(self) -> int:
+        """Get the current user turn number."""
+        return self.user_turn_count
+    
+    def get_current_bot_turn(self) -> int:
+        """Get the current bot turn number."""
+        return self.bot_turn_count
+
 
 class MemoryContextManager(FrameProcessor):
     """
@@ -66,6 +153,7 @@ class MemoryContextManager(FrameProcessor):
         memory: AsyncConversationMemory,
         context: LLMContext,
         system_prompt: str,
+        conversation_logger: Optional[ConversationLogger] = None,
         **kwargs
     ):
         """
@@ -75,11 +163,13 @@ class MemoryContextManager(FrameProcessor):
             memory: The AsyncConversationMemory instance
             context: The LLMContext to sync with
             system_prompt: The system prompt to always include
+            conversation_logger: Optional ConversationLogger for JSON logging
         """
         super().__init__(**kwargs)
         self._memory = memory
         self._context = context
         self._system_prompt = system_prompt
+        self._conversation_logger = conversation_logger
         
         # Track assistant response aggregation
         self._llm_response_started = False
@@ -140,6 +230,10 @@ class MemoryContextManager(FrameProcessor):
             self._last_user_message = last_user_msg
             logger.debug(f"MemoryContextManager: Adding user message to memory: {last_user_msg[:50]}...")
             
+            # Log to conversation JSON
+            if self._conversation_logger:
+                self._conversation_logger.add_message("user", last_user_msg)
+            
             # Add to memory - await to ensure it's processed before we sync
             user_chat_msg = ChatMessage(role=MessageRole.USER, content=last_user_msg)
             await self._memory.put(user_chat_msg)
@@ -162,6 +256,10 @@ class MemoryContextManager(FrameProcessor):
             return
         
         logger.debug(f"MemoryContextManager: Adding assistant message to memory: {full_response[:50]}...")
+        
+        # Log to conversation JSON
+        if self._conversation_logger:
+            self._conversation_logger.add_message("assistant", full_response)
         
         # Add to memory in non-blocking way (don't need to wait for assistant messages)
         message = ChatMessage(role=MessageRole.ASSISTANT, content=full_response)
@@ -220,6 +318,11 @@ class MemoryContextManager(FrameProcessor):
     def context(self) -> LLMContext:
         """Get the context instance."""
         return self._context
+    
+    @property
+    def conversation_logger(self) -> Optional[ConversationLogger]:
+        """Get the conversation logger instance."""
+        return self._conversation_logger
 
 # Setup OpenTelemetry tracing (always enabled if dependencies are available)
 V2V_TRACER = None
@@ -346,7 +449,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     # Token limit of 500 allows ~25-30 messages before summarization kicks in
     conversation_memory = AsyncConversationMemory(
         api_key=os.getenv("OPENAI_API_KEY"),
-        token_limit=50,  # Adjust based on your needs
+        token_limit=500,  # Adjust based on your needs
         model="gpt-4o-mini",  # Fast model for summarization
         auto_summarize=True,
         summarize_prompt="""Summarize the conversation concisely. 
@@ -365,18 +468,61 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
     context = LLMContext(messages)
     context_aggregator = LLMContextAggregatorPair(context)
     
+    # Create ConversationLogger for JSON logging and audio recording
+    conversation_logger = ConversationLogger()
+    
     # Create MemoryContextManager to sync AsyncConversationMemory with LLMContext
     memory_context_manager = MemoryContextManager(
         memory=conversation_memory,
         context=context,
         system_prompt=system_prompt,
+        conversation_logger=conversation_logger,
     )
+    
+    # Create AudioBufferProcessor for turn-based audio recording
+    # Enable turn_audio to get individual audio clips for each speaking turn
+    audio_buffer = AudioBufferProcessor(
+        num_channels=1,  # Mono audio
+        enable_turn_audio=True,  # Enable per-turn audio recording
+        user_continuous_stream=True,  # User has continuous audio stream
+    )
+    
+    # Track turn counts for audio file naming
+    user_audio_turn = 0
+    bot_audio_turn = 0
+    
+    @audio_buffer.event_handler("on_user_turn_audio_data")
+    async def on_user_turn_audio(buffer, audio, sample_rate, num_channels):
+        """Handle user turn audio data - save with turn-based naming."""
+        nonlocal user_audio_turn
+        user_audio_turn += 1
+        conversation_logger.save_audio(
+            audio_data=audio,
+            sample_rate=sample_rate,
+            num_channels=num_channels,
+            role="user",
+            turn_number=user_audio_turn,
+        )
+    
+    @audio_buffer.event_handler("on_bot_turn_audio_data")
+    async def on_bot_turn_audio(buffer, audio, sample_rate, num_channels):
+        """Handle bot turn audio data - save with turn-based naming."""
+        nonlocal bot_audio_turn
+        bot_audio_turn += 1
+        conversation_logger.save_audio(
+            audio_data=audio,
+            sample_rate=sample_rate,
+            num_channels=num_channels,
+            role="bot",
+            turn_number=bot_audio_turn,
+        )
 
     # Create V2V speaking tracer for OpenTelemetry spans
     v2v_tracer = V2VSpeakingTracer(tracer=V2V_TRACER)
 
     # Pipeline with MemoryContextManager placed AFTER context_aggregator.user() 
     # and BEFORE llm to intercept LLMContextFrame and sync memory
+    # AudioBufferProcessor is placed AFTER transport.output() to capture both user and bot audio
     pipeline = Pipeline(
         [
             transport.input(),  # Transport user input
@@ -387,6 +533,7 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
             llm,  # LLM
             tts,  # TTS
             transport.output(),  # Transport bot output
+            audio_buffer,  # Audio recording - captures both user and bot audio
             context_aggregator.assistant(),  # Assistant spoken responses
         ]
     )
@@ -407,6 +554,9 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
         logger.info(f"Client connected")
         # Start the conversation span for V2V tracing
         v2v_tracer.start_conversation()
+        # Start audio recording
+        await audio_buffer.start_recording()
+        logger.info(f"Audio recording started. Session: {conversation_logger.session_id}")
         # Kick off the conversation.
         # Note: We don't add to messages list anymore since MemoryContextManager handles context
         await task.queue_frames([LLMRunFrame()])
@@ -416,6 +566,20 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
         logger.info(f"Client disconnected")
         # End the conversation span for V2V tracing
         v2v_tracer.end_conversation()
+        
+        # Stop audio recording
+        await audio_buffer.stop_recording()
+        
+        # Log recording summary
+        logger.info(
+            f"Recording complete. Session: {conversation_logger.session_id}, "
+            f"User turns: {conversation_logger.user_turn_count}, "
+            f"Bot turns: {conversation_logger.bot_turn_count}, "
+            f"Audio user turns: {user_audio_turn}, "
+            f"Audio bot turns: {bot_audio_turn}"
+        )
+        logger.info(f"Conversation JSON saved to: {conversation_logger.json_file}")
+        logger.info(f"Audio files saved to: {conversation_logger.session_dir}")
         
         # Log memory state on disconnect
         state = conversation_memory.get_state()
