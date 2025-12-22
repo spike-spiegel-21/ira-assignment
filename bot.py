@@ -134,18 +134,107 @@ class ConversationLogger:
         return self.bot_turn_count
 
 
+class AssistantResponseLogger(FrameProcessor):
+    """
+    A FrameProcessor that captures assistant responses from the LLM.
+    
+    This processor should be placed AFTER the LLM to capture TextFrames and
+    LLMFullResponseEndFrame, logging assistant messages to the ConversationLogger
+    and memory.
+    """
+    
+    def __init__(
+        self,
+        memory: AsyncConversationMemory,
+        conversation_logger: Optional[ConversationLogger] = None,
+        **kwargs
+    ):
+        """
+        Initialize the assistant response logger.
+        
+        Args:
+            memory: The AsyncConversationMemory instance
+            conversation_logger: Optional ConversationLogger for JSON logging
+        """
+        super().__init__(**kwargs)
+        self._memory = memory
+        self._conversation_logger = conversation_logger
+        
+        # Track assistant response aggregation
+        self._llm_response_started = False
+        self._assistant_aggregation: list[str] = []
+        
+        # Track pending memory tasks for cleanup
+        self._pending_tasks: set[asyncio.Task] = set()
+    
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        """Process frames to capture assistant responses."""
+        await super().process_frame(frame, direction)
+        
+        # Track LLM response start
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._llm_response_started = True
+            self._assistant_aggregation = []
+        
+        # Capture assistant text during response
+        elif isinstance(frame, TextFrame) and self._llm_response_started:
+            if frame.text:
+                self._assistant_aggregation.append(frame.text)
+        
+        # Capture completed assistant response
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            await self._handle_assistant_response_end()
+        
+        # Always pass the frame through
+        await self.push_frame(frame, direction)
+    
+    async def _handle_assistant_response_end(self):
+        """Handle assistant response completion - log to JSON and add to memory."""
+        self._llm_response_started = False
+        
+        if not self._assistant_aggregation:
+            return
+        
+        # Combine aggregated text
+        full_response = "".join(self._assistant_aggregation)
+        self._assistant_aggregation = []
+        
+        if not full_response.strip():
+            return
+        
+        logger.debug(f"AssistantResponseLogger: Capturing assistant message: {full_response[:50]}...")
+        
+        # Log to conversation JSON
+        if self._conversation_logger:
+            self._conversation_logger.add_message("assistant", full_response)
+        
+        # Add to memory in non-blocking way
+        message = ChatMessage(role=MessageRole.ASSISTANT, content=full_response)
+        task = self._memory.put_nowait(message)
+        self._track_task(task)
+    
+    def _track_task(self, task: asyncio.Task):
+        """Track a task and clean up when done."""
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._task_done)
+    
+    def _task_done(self, task: asyncio.Task):
+        """Remove completed task from tracking."""
+        self._pending_tasks.discard(task)
+        if task.done() and not task.cancelled():
+            exc = task.exception()
+            if exc:
+                logger.error(f"AssistantResponseLogger: Task failed with error: {exc}")
+
+
 class MemoryContextManager(FrameProcessor):
     """
     A FrameProcessor that integrates AsyncConversationMemory with pipecat's LLMContext.
     
     This processor should be placed AFTER context_aggregator.user() and BEFORE llm.
+    It handles user messages and syncs memory to context before LLM processes.
     
-    Flow:
-    1. User speaks → TranscriptionFrame → context_aggregator.user() aggregates → creates LLMContextFrame
-    2. LLMContextFrame arrives here → we extract the user message, add to memory, sync context
-    3. LLM processes with memory-managed context (summary + recent messages)
-    4. LLM responds → TextFrame flows through → we capture assistant responses
-    5. Assistant response complete → LLMFullResponseEndFrame → add to memory (non-blocking)
+    Note: Assistant response capture is handled by AssistantResponseLogger placed AFTER the LLM.
     """
     
     def __init__(
@@ -171,13 +260,6 @@ class MemoryContextManager(FrameProcessor):
         self._system_prompt = system_prompt
         self._conversation_logger = conversation_logger
         
-        # Track assistant response aggregation
-        self._llm_response_started = False
-        self._assistant_aggregation: list[str] = []
-        
-        # Track pending memory tasks for cleanup
-        self._pending_tasks: set[asyncio.Task] = set()
-        
         # Track last user message to avoid duplicates
         self._last_user_message: Optional[str] = None
     
@@ -189,20 +271,6 @@ class MemoryContextManager(FrameProcessor):
         # This is our opportunity to sync memory before LLM processes
         if isinstance(frame, LLMContextFrame):
             await self._handle_llm_context_frame(frame)
-        
-        # Track LLM response start
-        elif isinstance(frame, LLMFullResponseStartFrame):
-            self._llm_response_started = True
-            self._assistant_aggregation = []
-        
-        # Capture assistant text during response
-        elif isinstance(frame, TextFrame) and self._llm_response_started:
-            if frame.text:
-                self._assistant_aggregation.append(frame.text)
-        
-        # Capture completed assistant response
-        elif isinstance(frame, LLMFullResponseEndFrame):
-            await self._handle_assistant_response_end()
         
         # Always pass the frame through
         await self.push_frame(frame, direction)
@@ -241,31 +309,6 @@ class MemoryContextManager(FrameProcessor):
         # Now sync memory to context
         await self._sync_memory_to_context()
     
-    async def _handle_assistant_response_end(self):
-        """Handle assistant response completion - add to memory non-blocking."""
-        self._llm_response_started = False
-        
-        if not self._assistant_aggregation:
-            return
-        
-        # Combine aggregated text
-        full_response = "".join(self._assistant_aggregation)
-        self._assistant_aggregation = []
-        
-        if not full_response.strip():
-            return
-        
-        logger.debug(f"MemoryContextManager: Adding assistant message to memory: {full_response[:50]}...")
-        
-        # Log to conversation JSON
-        if self._conversation_logger:
-            self._conversation_logger.add_message("assistant", full_response)
-        
-        # Add to memory in non-blocking way (don't need to wait for assistant messages)
-        message = ChatMessage(role=MessageRole.ASSISTANT, content=full_response)
-        task = self._memory.put_nowait(message)
-        self._track_task(task)
-    
     async def _sync_memory_to_context(self):
         """Sync memory state to LLMContext before LLM runs."""
         # Get context from memory (includes system prompt + summary + recent messages)
@@ -294,20 +337,6 @@ class MemoryContextManager(FrameProcessor):
             # Truncate long content for readability
             content_preview = content[:100] + "..." if len(content) > 100 else content
             logger.debug(f"  [{i}] {role}: {content_preview}")
-    
-    def _track_task(self, task: asyncio.Task):
-        """Track a task and clean up when done."""
-        self._pending_tasks.add(task)
-        task.add_done_callback(self._task_done)
-    
-    def _task_done(self, task: asyncio.Task):
-        """Remove completed task from tracking."""
-        self._pending_tasks.discard(task)
-        # Log any exceptions
-        if task.done() and not task.cancelled():
-            exc = task.exception()
-            if exc:
-                logger.error(f"MemoryContextManager: Task failed with error: {exc}")
     
     @property
     def memory(self) -> AsyncConversationMemory:
@@ -472,10 +501,18 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
     conversation_logger = ConversationLogger()
     
     # Create MemoryContextManager to sync AsyncConversationMemory with LLMContext
+    # This is placed BEFORE the LLM to handle user messages and sync context
     memory_context_manager = MemoryContextManager(
         memory=conversation_memory,
         context=context,
         system_prompt=system_prompt,
+        conversation_logger=conversation_logger,
+    )
+    
+    # Create AssistantResponseLogger to capture assistant responses
+    # This is placed AFTER the LLM to capture TextFrames and log them
+    assistant_response_logger = AssistantResponseLogger(
+        memory=conversation_memory,
         conversation_logger=conversation_logger,
     )
     
@@ -522,6 +559,7 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
 
     # Pipeline with MemoryContextManager placed AFTER context_aggregator.user() 
     # and BEFORE llm to intercept LLMContextFrame and sync memory
+    # AssistantResponseLogger is placed AFTER llm to capture assistant responses
     # AudioBufferProcessor is placed AFTER transport.output() to capture both user and bot audio
     pipeline = Pipeline(
         [
@@ -529,8 +567,9 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
             stt,  # STT
             v2v_tracer,  # V2V speaking event tracer (after STT to capture TranscriptionFrames)
             context_aggregator.user(),  # User responses - creates LLMContextFrame
-            memory_context_manager,  # Intercepts LLMContextFrame, syncs memory, captures assistant responses
+            memory_context_manager,  # Intercepts LLMContextFrame, syncs memory
             llm,  # LLM
+            assistant_response_logger,  # Captures assistant responses and logs to JSON
             tts,  # TTS
             transport.output(),  # Transport bot output
             audio_buffer,  # Audio recording - captures both user and bot audio
