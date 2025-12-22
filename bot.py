@@ -46,6 +46,7 @@ from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 
 from async_memory import AsyncConversationMemory, ChatMessage, MessageRole
 from tracer import V2VSpeakingTracer
+from mem0 import MemoryClient
 
 load_dotenv(override=True)
 
@@ -414,6 +415,39 @@ def load_voice_cloning_key() -> str:
     except FileNotFoundError:
         return None
 
+
+def fetch_user_memories(user_id: str) -> str:
+    """Fetch user memories from mem0 and format them as a string."""
+    mem0_api_key = os.getenv("MEM0_API_KEY")
+    if not mem0_api_key:
+        logger.warning("MEM0_API_KEY not found in environment. User memories will be empty.")
+        return ""
+    
+    try:
+        memory_client = MemoryClient(api_key=mem0_api_key)
+        memories = memory_client.get_all(
+            filters={
+                "AND": [
+                    {
+                        "user_id": user_id.lower(),
+                    }
+                ]
+            }
+        )
+        
+        if not memories or not memories.get("results"):
+            logger.info(f"No memories found for user: {user_id}")
+            return ""
+        
+        # Format memories as a bullet list
+        memory_list = [f"- {memory['memory']}" for memory in memories["results"]]
+        formatted_memories = "\n".join(memory_list)
+        logger.info(f"Fetched {len(memory_list)} memories for user: {user_id}")
+        return formatted_memories
+    except Exception as e:
+        logger.error(f"Failed to fetch user memories: {e}")
+        return ""
+
 # We store functions so objects (e.g. SileroVADAnalyzer) don't get
 # instantiated. The function will be called when the desired transport gets
 # selected.
@@ -471,8 +505,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"))
 
-    # Load system prompt
-    system_prompt = load_system_prompt().replace("{user_name}", USER_NAME)
+    # Load system prompt and interpolate user info
+    user_memories = fetch_user_memories(USER_NAME)
+    system_prompt = load_system_prompt().replace("{user_name}", USER_NAME).replace("{user_memories}", user_memories)
     
     # Initialize AsyncConversationMemory for context management
     # Token limit of 500 allows ~25-30 messages before summarization kicks in
