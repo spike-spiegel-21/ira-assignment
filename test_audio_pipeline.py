@@ -33,6 +33,7 @@ from pipecat.frames.frames import (
     TextFrame,
     TranscriptionFrame,
     LLMContextFrame,
+    LLMRunFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -190,6 +191,7 @@ class BotResponseMonitor(FrameProcessor):
         self._tts_buffer_time = tts_buffer_time
         self._tts_active = False
         self._pending_tts_complete_task: Optional[asyncio.Task] = None
+        self._pending_delayed_response_task: Optional[asyncio.Task] = None
     
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         """Monitor frames for bot response status."""
@@ -234,8 +236,12 @@ class BotResponseMonitor(FrameProcessor):
             self._current_response_text = []
             self._llm_response_complete_event.set()
             
+            # Cancel any existing delayed response task before creating a new one
+            if self._pending_delayed_response_task:
+                self._pending_delayed_response_task.cancel()
+            
             # Schedule response completion after buffer time if no TTS frames
-            self._pending_tts_complete_task = asyncio.create_task(
+            self._pending_delayed_response_task = asyncio.create_task(
                 self._delayed_response_complete()
             )
         
@@ -269,9 +275,22 @@ class BotResponseMonitor(FrameProcessor):
         Returns:
             True if response completed, False if timeout
         """
+        # Clear event and cancel any pending completion tasks BEFORE waiting
+        # This ensures we wait for the NEXT response, not a stale one
+        self._response_complete_event.clear()
+        self._llm_response_complete_event.clear()
+        self._tts_complete_event.clear()
+        
+        # Cancel any pending delayed completion tasks
+        if self._pending_tts_complete_task:
+            self._pending_tts_complete_task.cancel()
+            self._pending_tts_complete_task = None
+        if self._pending_delayed_response_task:
+            self._pending_delayed_response_task.cancel()
+            self._pending_delayed_response_task = None
+        
         try:
             await asyncio.wait_for(self._response_complete_event.wait(), timeout)
-            self._response_complete_event.clear()
             return True
         except asyncio.TimeoutError:
             logger.warning(f"BotResponseMonitor: Timeout waiting for bot response")
@@ -727,12 +746,50 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
         
         return True
     
+    async def trigger_initial_greeting(
+        self,
+        wait_for_response: bool = True,
+        response_timeout: float = 60.0,
+    ) -> bool:
+        """
+        Trigger the bot's initial greeting by sending LLMRunFrame.
+        
+        This mimics what happens in bot.py when a client connects.
+        
+        Args:
+            wait_for_response: If True, wait for bot to finish speaking
+            response_timeout: Maximum time to wait for response
+            
+        Returns:
+            True if successful, False if error or timeout
+        """
+        if not self._initialized:
+            raise RuntimeError("Pipeline not initialized. Call initialize() first.")
+        
+        logger.info("AudioPipelineTester: Triggering initial greeting (LLMRunFrame)")
+        
+        # Queue LLMRunFrame to trigger the LLM to generate greeting
+        await self._task.queue_frames([LLMRunFrame()])
+        
+        # Wait for bot response if requested
+        if wait_for_response:
+            logger.info("AudioPipelineTester: Waiting for initial greeting...")
+            success = await self._response_monitor.wait_for_response(timeout=response_timeout)
+            if success:
+                logger.info("AudioPipelineTester: Initial greeting complete")
+            else:
+                logger.warning("AudioPipelineTester: Timeout waiting for initial greeting")
+            return success
+        
+        return True
+    
     async def send_audio_files(
         self,
         audio_paths: List[Path],
         wait_for_response: bool = True,
         response_timeout: float = 60.0,
         delay_between_files: float = 0.5,
+        trigger_greeting: bool = True,
     ) -> List[bool]:
         """
         Send multiple audio files sequentially, waiting for bot response between each.
@@ -742,11 +799,25 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
             wait_for_response: If True, wait for bot to finish speaking after each file
             response_timeout: Maximum time to wait for each response
             delay_between_files: Delay between files in seconds
+            trigger_greeting: If True, trigger initial bot greeting before first audio
             
         Returns:
             List of success status for each file
         """
         results = []
+        
+        # Trigger initial greeting if requested
+        if trigger_greeting:
+            greeting_success = await self.trigger_initial_greeting(
+                wait_for_response=wait_for_response,
+                response_timeout=response_timeout,
+            )
+            if not greeting_success:
+                logger.warning("AudioPipelineTester: Initial greeting failed or timed out")
+            
+            # Add delay after greeting
+            if delay_between_files > 0:
+                await asyncio.sleep(delay_between_files)
         
         for i, audio_path in enumerate(audio_paths):
             logger.info(f"AudioPipelineTester: Processing file {i+1}/{len(audio_paths)}: {audio_path.name}")
@@ -771,6 +842,7 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
         wait_for_response: bool = True,
         response_timeout: float = 60.0,
         delay_between_files: float = 0.5,
+        trigger_greeting: bool = True,
     ) -> List[bool]:
         """
         Send all matching audio files from a directory sequentially.
@@ -781,6 +853,7 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
             wait_for_response: If True, wait for bot to finish speaking after each file
             response_timeout: Maximum time to wait for each response
             delay_between_files: Delay between files in seconds
+            trigger_greeting: If True, trigger initial bot greeting before first audio
             
         Returns:
             List of success status for each file
@@ -805,6 +878,7 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
             wait_for_response=wait_for_response,
             response_timeout=response_timeout,
             delay_between_files=delay_between_files,
+            trigger_greeting=trigger_greeting,
         )
     
     async def shutdown(self):
