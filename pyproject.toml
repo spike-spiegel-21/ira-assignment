@@ -9,6 +9,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc",
     "langchain>=1.2.0",
     "mem0ai>=1.0.1",
+    "matplotlib>=3.10.8",
 ]
 
 [dependency-groups]
