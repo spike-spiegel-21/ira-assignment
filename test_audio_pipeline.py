@@ -31,6 +31,8 @@ from pipecat.frames.frames import (
     TTSStoppedFrame,
     EndFrame,
     TextFrame,
+    TranscriptionFrame,
+    LLMContextFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -354,6 +356,91 @@ class NullAudioSink(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class UserMessageLogger(FrameProcessor):
+    """
+    Logs user messages from LLMContextFrame.
+    
+    Should be placed BEFORE the LLM in the pipeline (after context_aggregator.user()).
+    """
+    
+    def __init__(self, conversation_logger: ConversationLogger, context: LLMContext, **kwargs):
+        super().__init__(**kwargs)
+        self._conversation_logger = conversation_logger
+        self._context = context
+        self._last_user_message: Optional[str] = None
+    
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        
+        # Capture user messages from LLMContextFrame (created by context_aggregator.user())
+        if isinstance(frame, LLMContextFrame):
+            self._capture_user_from_context()
+            self._log_llm_context()
+        
+        await self.push_frame(frame, direction)
+    
+    def _capture_user_from_context(self):
+        """Extract and log the latest user message from LLM context."""
+        messages = self._context.get_messages()
+        
+        for msg in reversed(messages):
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                user_content = msg.get("content", "")
+                if user_content and user_content != self._last_user_message:
+                    self._last_user_message = user_content
+                    self._conversation_logger.add_message("user", user_content)
+                    logger.debug(f"UserMessageLogger: Logged user message: {user_content[:50]}...")
+                break
+    
+    def _log_llm_context(self):
+        """Log all messages being sent to LLM for debugging."""
+        messages = self._context.get_messages()
+        logger.info(f"UserMessageLogger: LLM Context ({len(messages)} messages):")
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            content_preview = content[:100] + "..." if len(content) > 100 else content
+            logger.debug(f"  [{i}] {role}: {content_preview}")
+
+
+class AssistantMessageLogger(FrameProcessor):
+    """
+    Logs assistant messages from TextFrame/LLMFullResponseEndFrame.
+    
+    Should be placed AFTER the LLM in the pipeline.
+    """
+    
+    def __init__(self, conversation_logger: ConversationLogger, **kwargs):
+        super().__init__(**kwargs)
+        self._conversation_logger = conversation_logger
+        self._llm_response_started = False
+        self._assistant_aggregation: List[str] = []
+    
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._llm_response_started = True
+            self._assistant_aggregation = []
+        
+        elif isinstance(frame, TextFrame) and self._llm_response_started:
+            if frame.text:
+                self._assistant_aggregation.append(frame.text)
+        
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            self._llm_response_started = False
+            
+            if self._assistant_aggregation:
+                full_response = "".join(self._assistant_aggregation)
+                self._assistant_aggregation = []
+                
+                if full_response.strip():
+                    self._conversation_logger.add_message("assistant", full_response)
+                    logger.debug(f"AssistantMessageLogger: Logged assistant message: {full_response[:50]}...")
+        
+        await self.push_frame(frame, direction)
+
+
 class AudioPipelineTester:
     """
     Main test harness for sending audio files to the bot pipeline.
@@ -376,6 +463,7 @@ class AudioPipelineTester:
         user_name: Optional[str] = None,
         sample_rate: int = 16000,
         use_bot_components: bool = True,
+        with_memory: bool = False,
     ):
         """
         Initialize the tester.
@@ -384,10 +472,12 @@ class AudioPipelineTester:
             user_name: User name for system prompt interpolation (default: from bot.py)
             sample_rate: Audio sample rate
             use_bot_components: If True, use actual bot.py components. If False, use simplified pipeline.
+            with_memory: If True, include MemoryContextManager and fetch user memories. Default: False.
         """
         self._user_name = user_name or USER_NAME
         self._sample_rate = sample_rate
         self._use_bot_components = use_bot_components
+        self._with_memory = with_memory
         
         # Pipeline components
         self._audio_source: Optional[AudioFileSource] = None
@@ -402,6 +492,8 @@ class AudioPipelineTester:
         self._conversation_logger: Optional[ConversationLogger] = None
         self._memory_context_manager: Optional[MemoryContextManager] = None
         self._assistant_response_logger: Optional[AssistantResponseLogger] = None
+        self._user_message_logger: Optional[UserMessageLogger] = None
+        self._assistant_message_logger: Optional[AssistantMessageLogger] = None
         self._v2v_tracer: Optional[V2VSpeakingTracer] = None
         
         # State
@@ -411,13 +503,21 @@ class AudioPipelineTester:
     
     def _load_system_prompt(self) -> str:
         """Load and interpolate system prompt from bot.py."""
-        user_memories = fetch_user_memories(self._user_name)
+        # Only fetch user memories if with_memory is enabled
+        if self._with_memory:
+            user_memories = fetch_user_memories(self._user_name)
+            logger.info(f"AudioPipelineTester: Fetched user memories (with_memory=True)")
+        else:
+            user_memories = ""
+            logger.info(f"AudioPipelineTester: Skipping user memories (with_memory=False)")
+        
         system_prompt = load_system_prompt()
         return system_prompt.replace("{user_name}", self._user_name).replace("{user_memories}", user_memories)
     
     async def initialize(self):
         """Initialize the pipeline using actual bot.py components."""
-        logger.info("AudioPipelineTester: Initializing pipeline with bot.py components...")
+        memory_mode = "with memory" if self._with_memory else "without memory"
+        logger.info(f"AudioPipelineTester: Initializing pipeline ({memory_mode})...")
         
         # Load system prompt
         self._system_prompt = self._load_system_prompt()
@@ -455,17 +555,6 @@ class AudioPipelineTester:
         # Create LLM service
         llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"))
         
-        # Initialize AsyncConversationMemory (same as bot.py)
-        self._conversation_memory = AsyncConversationMemory(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            token_limit=500,
-            model="gpt-4o-mini",
-            auto_summarize=True,
-            summarize_prompt="""Summarize the conversation concisely. 
-Preserve: names, numbers, key decisions, action items, and important context.
-Keep it brief but comprehensive enough to continue the conversation naturally."""
-        )
-        
         # Create LLMContext with system prompt
         messages = [
             {"role": "system", "content": self._system_prompt},
@@ -477,19 +566,35 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
         self._conversation_logger = ConversationLogger()
         logger.info(f"AudioPipelineTester: Created ConversationLogger. Session: {self._conversation_logger.session_id}")
         
-        # Create MemoryContextManager (from bot.py)
-        self._memory_context_manager = MemoryContextManager(
-            memory=self._conversation_memory,
-            context=context,
-            system_prompt=self._system_prompt,
-            conversation_logger=self._conversation_logger,
-        )
-        
-        # Create AssistantResponseLogger (from bot.py)
-        self._assistant_response_logger = AssistantResponseLogger(
-            memory=self._conversation_memory,
-            conversation_logger=self._conversation_logger,
-        )
+        # Only create memory components if with_memory is enabled
+        if self._with_memory:
+            # Initialize AsyncConversationMemory (same as bot.py)
+            self._conversation_memory = AsyncConversationMemory(
+                api_key=os.getenv("OPENAI_API_KEY"),
+                token_limit=500,
+                model="gpt-4o-mini",
+                auto_summarize=True,
+                summarize_prompt="""Summarize the conversation concisely. 
+Preserve: names, numbers, key decisions, action items, and important context.
+Keep it brief but comprehensive enough to continue the conversation naturally."""
+            )
+            
+            # Create MemoryContextManager (from bot.py)
+            self._memory_context_manager = MemoryContextManager(
+                memory=self._conversation_memory,
+                context=context,
+                system_prompt=self._system_prompt,
+                conversation_logger=self._conversation_logger,
+            )
+            
+            # Create AssistantResponseLogger (from bot.py)
+            self._assistant_response_logger = AssistantResponseLogger(
+                memory=self._conversation_memory,
+                conversation_logger=self._conversation_logger,
+            )
+            logger.info("AudioPipelineTester: Memory components enabled")
+        else:
+            logger.info("AudioPipelineTester: Memory components disabled (with_memory=False)")
         
         # Create V2VSpeakingTracer (from bot.py) - with OpenTelemetry for testing
         self._v2v_tracer = V2VSpeakingTracer(tracer=V2V_TRACER)
@@ -499,22 +604,54 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
         self._response_monitor = BotResponseMonitor()
         audio_sink = NullAudioSink()
         
-        # Build pipeline - SAME STRUCTURE AS bot.py
-        self._pipeline = Pipeline(
-            [
-                self._audio_source,  # Inject audio files (replaces transport.input())
-                stt,  # STT
-                self._v2v_tracer,  # V2V speaking event tracer
-                context_aggregator.user(),  # User responses - creates LLMContextFrame
-                self._memory_context_manager,  # Intercepts LLMContextFrame, syncs memory
-                llm,  # LLM
-                self._assistant_response_logger,  # Captures assistant responses
-                tts,  # TTS
-                self._response_monitor,  # Monitor bot responses for test coordination
-                audio_sink,  # Consume audio output (replaces transport.output())
-                context_aggregator.assistant(),  # Assistant spoken responses
-            ]
-        )
+        # Build pipeline - structure depends on with_memory flag
+        if self._with_memory:
+            # Full pipeline with memory management (same as bot.py)
+            self._pipeline = Pipeline(
+                [
+                    self._audio_source,  # Inject audio files (replaces transport.input())
+                    stt,  # STT
+                    self._v2v_tracer,  # V2V speaking event tracer
+                    context_aggregator.user(),  # User responses - creates LLMContextFrame
+                    self._memory_context_manager,  # Intercepts LLMContextFrame, syncs memory
+                    llm,  # LLM
+                    self._assistant_response_logger,  # Captures assistant responses
+                    tts,  # TTS
+                    self._response_monitor,  # Monitor bot responses for test coordination
+                    audio_sink,  # Consume audio output (replaces transport.output())
+                    context_aggregator.assistant(),  # Assistant spoken responses
+                ]
+            )
+            logger.info("AudioPipelineTester: Built pipeline WITH memory components")
+        else:
+            # Create loggers for conversation logging without memory management
+            self._user_message_logger = UserMessageLogger(
+                conversation_logger=self._conversation_logger,
+                context=context,
+            )
+            self._assistant_message_logger = AssistantMessageLogger(
+                conversation_logger=self._conversation_logger,
+            )
+            
+            # Simplified pipeline without memory management but with conversation logging
+            # UserMessageLogger is placed BEFORE LLM to capture user messages from LLMContextFrame
+            # AssistantMessageLogger is placed AFTER LLM to capture assistant responses
+            self._pipeline = Pipeline(
+                [
+                    self._audio_source,  # Inject audio files (replaces transport.input())
+                    stt,  # STT
+                    self._v2v_tracer,  # V2V speaking event tracer
+                    context_aggregator.user(),  # User responses - creates LLMContextFrame
+                    self._user_message_logger,  # Log user messages from LLMContextFrame
+                    llm,  # LLM
+                    self._assistant_message_logger,  # Log assistant responses
+                    tts,  # TTS
+                    self._response_monitor,  # Monitor bot responses for test coordination
+                    audio_sink,  # Consume audio output (replaces transport.output())
+                    context_aggregator.assistant(),  # Assistant spoken responses
+                ]
+            )
+            logger.info("AudioPipelineTester: Built pipeline WITHOUT memory components (with conversation logging)")
         
         self._task = PipelineTask(
             self._pipeline,
@@ -528,7 +665,7 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
         self._runner = PipelineRunner(handle_sigint=False)
         
         self._initialized = True
-        logger.info("AudioPipelineTester: Pipeline initialized with bot.py components")
+        logger.info(f"AudioPipelineTester: Pipeline initialized ({memory_mode})")
         
         # Start pipeline in background
         self._pipeline_task = asyncio.create_task(self._run_pipeline_internal())
@@ -730,6 +867,7 @@ async def run_test(
     audio_directory: str,
     pattern: str = "user_turn_*.wav",
     wait_for_response: bool = True,
+    with_memory: bool = False,
 ):
     """
     Run a test sending audio files from a directory.
@@ -738,8 +876,9 @@ async def run_test(
         audio_directory: Path to directory containing audio files
         pattern: Glob pattern to match audio files
         wait_for_response: If True, wait for bot response after each file
+        with_memory: If True, enable MemoryContextManager and user memories
     """
-    tester = AudioPipelineTester()
+    tester = AudioPipelineTester(with_memory=with_memory)
     
     try:
         await tester.initialize()
@@ -787,6 +926,12 @@ async def main():
         action="store_true",
         help="Don't wait for bot response (fire and forget)",
     )
+    parser.add_argument(
+        "--with-memory",
+        action="store_true",
+        default=False,
+        help="Enable MemoryContextManager and fetch user memories (default: False)",
+    )
     
     args = parser.parse_args()
     
@@ -794,6 +939,7 @@ async def main():
         audio_directory=args.audio_directory,
         pattern=args.pattern,
         wait_for_response=not args.no_wait,
+        with_memory=args.with_memory,
     )
 
 
