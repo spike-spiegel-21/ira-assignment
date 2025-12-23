@@ -10,6 +10,7 @@
 
 import os
 import asyncio
+import json
 import wave
 from pathlib import Path
 from typing import Optional, List, Callable
@@ -483,6 +484,7 @@ class AudioPipelineTester:
         sample_rate: int = 16000,
         use_bot_components: bool = True,
         with_memory: bool = False,
+        conversation_history_path: Optional[str] = None,
     ):
         """
         Initialize the tester.
@@ -492,11 +494,13 @@ class AudioPipelineTester:
             sample_rate: Audio sample rate
             use_bot_components: If True, use actual bot.py components. If False, use simplified pipeline.
             with_memory: If True, include MemoryContextManager and fetch user memories. Default: False.
+            conversation_history_path: Path to a conversation.json file to pre-populate the LLM context.
         """
         self._user_name = user_name or USER_NAME
         self._sample_rate = sample_rate
         self._use_bot_components = use_bot_components
         self._with_memory = with_memory
+        self._conversation_history_path = conversation_history_path
         
         # Pipeline components
         self._audio_source: Optional[AudioFileSource] = None
@@ -532,6 +536,53 @@ class AudioPipelineTester:
         
         system_prompt = load_system_prompt()
         return system_prompt.replace("{user_name}", self._user_name).replace("{user_memories}", user_memories)
+    
+    def _load_conversation_history(self) -> List[dict]:
+        """
+        Load conversation history from a JSON file.
+        
+        Returns:
+            List of message dicts with 'role' and 'content' keys for LLM context.
+        """
+        if not self._conversation_history_path:
+            return []
+        
+        history_path = Path(self._conversation_history_path)
+        if not history_path.exists():
+            logger.warning(f"AudioPipelineTester: Conversation history file not found: {history_path}")
+            return []
+        
+        try:
+            with open(history_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            messages = data.get("messages", [])
+            
+            # Convert to LLM context format (only role and content)
+            context_messages = []
+            for msg in messages:
+                role = msg.get("role")
+                content = msg.get("content", "")
+                
+                # Only include user and assistant messages
+                if role in ("user", "assistant") and content:
+                    context_messages.append({
+                        "role": role,
+                        "content": content,
+                    })
+            
+            logger.info(
+                f"AudioPipelineTester: Loaded {len(context_messages)} messages from conversation history "
+                f"({history_path.name})"
+            )
+            return context_messages
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"AudioPipelineTester: Failed to parse conversation history: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"AudioPipelineTester: Error loading conversation history: {e}")
+            return []
     
     async def initialize(self):
         """Initialize the pipeline using actual bot.py components."""
@@ -574,10 +625,20 @@ class AudioPipelineTester:
         # Create LLM service
         llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"))
         
-        # Create LLMContext with system prompt
+        # Create LLMContext with system prompt and optional conversation history
         messages = [
             {"role": "system", "content": self._system_prompt},
         ]
+        
+        # Load and add conversation history if provided
+        conversation_history = self._load_conversation_history()
+        if conversation_history:
+            messages.extend(conversation_history)
+            logger.info(
+                f"AudioPipelineTester: Pre-populated context with {len(conversation_history)} messages "
+                f"from conversation history"
+            )
+        
         context = LLMContext(messages)
         context_aggregator = LLMContextAggregatorPair(context)
         
@@ -590,7 +651,7 @@ class AudioPipelineTester:
             # Initialize AsyncConversationMemory (same as bot.py)
             self._conversation_memory = AsyncConversationMemory(
                 api_key=os.getenv("OPENAI_API_KEY"),
-                token_limit=500,
+                token_limit=200,
                 model="gpt-4o-mini",
                 auto_summarize=True,
                 summarize_prompt="""Summarize the conversation concisely. 
@@ -862,8 +923,14 @@ Keep it brief but comprehensive enough to continue the conversation naturally.""
         if not directory.exists():
             raise FileNotFoundError(f"Directory not found: {directory}")
         
-        # Find all matching audio files, sorted by name
-        audio_files = sorted(directory.glob(pattern))
+        # Find all matching audio files, sorted numerically by the number in the filename
+        def extract_number(path: Path) -> int:
+            """Extract the numeric part from filename like 'user_turn_1.wav' -> 1"""
+            import re
+            match = re.search(r'(\d+)', path.stem)
+            return int(match.group(1)) if match else 0
+        
+        audio_files = sorted(directory.glob(pattern), key=extract_number)
         
         if not audio_files:
             logger.warning(f"No audio files found matching pattern '{pattern}' in {directory}")
@@ -942,6 +1009,7 @@ async def run_test(
     pattern: str = "user_turn_*.wav",
     wait_for_response: bool = True,
     with_memory: bool = False,
+    conversation_history_path: Optional[str] = None,
 ):
     """
     Run a test sending audio files from a directory.
@@ -951,8 +1019,12 @@ async def run_test(
         pattern: Glob pattern to match audio files
         wait_for_response: If True, wait for bot response after each file
         with_memory: If True, enable MemoryContextManager and user memories
+        conversation_history_path: Path to a conversation.json to pre-populate context
     """
-    tester = AudioPipelineTester(with_memory=with_memory)
+    tester = AudioPipelineTester(
+        with_memory=with_memory,
+        conversation_history_path=conversation_history_path,
+    )
     
     try:
         await tester.initialize()
@@ -1006,6 +1078,12 @@ async def main():
         default=False,
         help="Enable MemoryContextManager and fetch user memories (default: False)",
     )
+    parser.add_argument(
+        "--history",
+        type=str,
+        default=None,
+        help="Path to conversation.json to pre-populate LLM context with conversation history",
+    )
     
     args = parser.parse_args()
     
@@ -1014,6 +1092,7 @@ async def main():
         pattern=args.pattern,
         wait_for_response=not args.no_wait,
         with_memory=args.with_memory,
+        conversation_history_path=args.history,
     )
 
 

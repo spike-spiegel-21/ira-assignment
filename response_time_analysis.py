@@ -56,35 +56,38 @@ def calculate_response_times(conversation_data: dict) -> List[Tuple[int, float]]
     return response_times
 
 
-def load_all_conversations(recordings_dir: str) -> Dict[str, List[Tuple[int, float]]]:
+def load_conversations_from_files(file_paths: List[str]) -> Dict[str, List[Tuple[int, float]]]:
     """
-    Load all conversation.json files from the recordings directory.
+    Load conversations from specific JSON file paths.
     
-    Returns a dictionary: {session_id: [(turn_num, time_diff_ms), ...]}
+    Returns a dictionary: {session_id/filename: [(turn_num, time_diff_ms), ...]}
     """
     conversations = {}
-    recordings_path = Path(recordings_dir)
     
-    if not recordings_path.exists():
-        print(f"Error: Directory {recordings_dir} does not exist")
-        return conversations
-    
-    for session_dir in sorted(recordings_path.iterdir()):
-        if session_dir.is_dir():
-            conversation_file = session_dir / "conversation.json"
-            if conversation_file.exists():
-                try:
-                    with open(conversation_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    
-                    session_id = data.get("session_id", session_dir.name)
-                    response_times = calculate_response_times(data)
-                    
-                    if response_times:  # Only add if we have valid data
-                        conversations[session_id] = response_times
-                        print(f"Loaded {len(response_times)} turn pairs from {session_id}")
-                except (json.JSONDecodeError, Exception) as e:
-                    print(f"Error loading {conversation_file}: {e}")
+    for file_path in file_paths:
+        path = Path(file_path)
+        
+        if not path.exists():
+            print(f"Error: File {file_path} does not exist")
+            continue
+        
+        if not path.is_file():
+            print(f"Error: {file_path} is not a file")
+            continue
+            
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Use session_id from data, or filename without extension as fallback
+            session_id = data.get("session_id", path.stem)
+            response_times = calculate_response_times(data)
+            
+            if response_times:  # Only add if we have valid data
+                conversations[session_id] = response_times
+                print(f"Loaded {len(response_times)} turn pairs from {session_id} ({path.name})")
+        except (json.JSONDecodeError, Exception) as e:
+            print(f"Error loading {file_path}: {e}")
     
     return conversations
 
@@ -209,27 +212,23 @@ def print_statistics(conversations: Dict[str, List[Tuple[int, float]]]):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Analyze response times between user and bot turns')
-    parser.add_argument('--recordings-dir', '-r', 
-                        default='recordings',
-                        help='Path to the recordings directory (default: recordings)')
+    parser = argparse.ArgumentParser(
+        description='Analyze response times between user and bot turns',
+        epilog='Example: python response_time_analysis.py recordings/without_memories/without_memories.json recordings/with_memories/with_memories.json'
+    )
+    parser.add_argument('conversations', nargs='+',
+                        help='Paths to conversation JSON files')
     parser.add_argument('--output', '-o',
                         default='response_time_graph.png',
                         help='Output file for the graph (default: response_time_graph.png)')
     parser.add_argument('--no-show', action='store_true',
                         help='Do not display the plot (only save to file)')
-    parser.add_argument('--sessions', '-s', nargs='*',
-                        help='Specific session IDs to analyze (default: all)')
     
     args = parser.parse_args()
     
-    # Load conversations
-    print(f"Loading conversations from: {args.recordings_dir}")
-    conversations = load_all_conversations(args.recordings_dir)
-    
-    # Filter sessions if specified
-    if args.sessions:
-        conversations = {k: v for k, v in conversations.items() if k in args.sessions}
+    # Load conversations from specified files
+    print(f"Loading {len(args.conversations)} conversation file(s)...")
+    conversations = load_conversations_from_files(args.conversations)
     
     if not conversations:
         print("No valid conversations found!")
