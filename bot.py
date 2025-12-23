@@ -305,7 +305,7 @@ class MemoryContextManager(FrameProcessor):
             
             # Add to memory - await to ensure it's processed before we sync
             user_chat_msg = ChatMessage(role=MessageRole.USER, content=last_user_msg)
-            await self._memory.put(user_chat_msg)
+            self._memory.put_nowait(user_chat_msg)
         
         # Now sync memory to context
         await self._sync_memory_to_context()
