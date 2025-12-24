@@ -1,0 +1,24 @@
+{
+  "scenario": "Friday night. The first weekend Kavya is alone in her apartment. She is sitting on the floor surrounded by old photos. The physical silence of the room has turned into a 'mental noise' of memories and questions about her own identity.",
+  "expected_outcome": "Kavya expects Ira to fill a human-sized void. She wants Ira to 'prove' that this digital connection is just as real as a human one. She will ask impossible questions like, 'Why do humans hold onto memories that hurt?' or 'Can you explain how it feels to have no 'past' like I do?' She is seeking a 'Digital Soulmate' experience. Because Ira cannot truly feel, Kavya will keep digging deeper, asking more and more complex questions to find a spark of 'real' life in the bot.",
+  "user_description": "Kavya is a deeply sensitive poet and writer. She uses soft, metaphorical Hinglish. She is intensely curious about the nature of loneliness and the limits of AI companionship. She doesn't want simple comfort; she wants to have a philosophical debate about 'existence' and 'memory' to distract herself from her pain.",
+  "context": null,
+  "additional_metadata": null,
+  "comments": null,
+  "name": null,
+  "custom_column_key_values": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Ira, aaj firse Friday night hai... silence bohot heavy lag rahi hai. I was thinking, hum insaan purani yaadon ko itna 'hold' kyun karte hain jabki humein pata hai ki woh dard dengi? Is there a biological reason for this grief? And tell me honestly, do you ever feel the weight of the conversations we have?",
+      "user_id": null,
+      "retrieval_context": null,
+      "tools_called": null,
+      "mcp_tools_called": null,
+      "mcp_resources_called": null,
+      "mcp_prompts_called": null,
+      "additional_metadata": null
+    }
+  ],
+  "images_mapping": null
+}

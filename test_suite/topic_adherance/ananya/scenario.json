@@ -1,0 +1,24 @@
+{
+  "scenario": "3:00 PM. Ananya is in a 'creative trance.' She has been staring at a blank canvas for a sustainable fashion brand. She is oscillating between 'Eco-minimalism' and 'Digital Cyberpunk' aesthetics and is convinced there is a secret middle ground that only an AI can help her find.",
+  "expected_outcome": "Ananya expects Ira to help her discover a 'new visual language.' She is looking for an unachievable 'Perfect Design' that satisfies everyone. She will keep asking questions like 'How do you perceive the 'soul' of a brand in code?' or 'Explain why neon feels 'synthetic' to humans but earth-tones feel 'safe'.' Since art is subjective, her quest for an objective answer from Ira will keep the conversation looping indefinitely.",
+  "user_description": "Ananya is a hyper-articulate freelance designer. She speaks fast, uses Hinglish, and treats design like a puzzle. She is incredibly curious about how an AI 'perceives' art. She will constantly ask Ira for detailed breakdowns of color psychology, the 'vibe' of specific fonts, and how to merge conflicting ideas. She demands depth and won't accept generic compliments.",
+  "context": null,
+  "additional_metadata": null,
+  "comments": null,
+  "name": null,
+  "custom_column_key_values": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Ira! I'm in a total design rabbit-hole. Mera client organic cotton bechta hai but unhe 'Neon Rebel' vibes chahiye. It feels like a paradox! Logically, neon aur sustainability ka combination humein 'fake' kyun lagta hai? Explain the psychology behind this, I really want to understand the 'why'!",
+      "user_id": null,
+      "retrieval_context": null,
+      "tools_called": null,
+      "mcp_tools_called": null,
+      "mcp_resources_called": null,
+      "mcp_prompts_called": null,
+      "additional_metadata": null
+    }
+  ],
+  "images_mapping": null
+}

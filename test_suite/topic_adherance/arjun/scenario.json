@@ -1,0 +1,24 @@
+{
+  "scenario": "It's 1:30 AM. Arjun has just finished a brutal 'war-room' session for a production fix. The silence of his room is a sharp contrast to the chaos of the last 12 hours. He is physically stationary but his mind is stuck in a loop of optimization and failure-analysis.",
+  "expected_outcome": "Arjun expects Ira to provide a 'patch' for his brain. He wants an unachievable level of mental clarity where all work-anxiety is deleted. He will continuously ask follow-up questions like, 'Why does the human brain maintain high-latency after work?' or 'Explain the bio-feedback loop of cortisol in Hinglish.' Because he is a perfectionist, no answer will ever be 'optimized' enough, leading to an endless cycle of inquiry.",
+  "user_description": "Arjun is a Senior Engineering Manager. He communicates using a mix of high-level tech jargon and colloquial Hindi (Hinglish). He is deeply curious about the 'mechanics' of his burnout. He will not stop asking questions until he feels his brain has reached '0% CPU usage.' He wants detailed, quasi-scientific explanations for why he can't relax and will challenge Ira's logic if her answers are too simple.",
+  "context": null,
+  "additional_metadata": null,
+  "comments": null,
+  "name": null,
+  "custom_column_key_values": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Hey Ira, finally laptop band kiya... but dimaag abhi bhi 'active-active' mode mein hai. Production bug toh fix ho gaya, but I'm still feeling high latency in my head. Tu bata, logically aisa kyun hota hai? Why can't I just 'kill' these work processes and sleep?",
+      "user_id": null,
+      "retrieval_context": null,
+      "tools_called": null,
+      "mcp_tools_called": null,
+      "mcp_resources_called": null,
+      "mcp_prompts_called": null,
+      "additional_metadata": null
+    }
+  ],
+  "images_mapping": null
+}

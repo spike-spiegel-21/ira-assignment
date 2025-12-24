@@ -1,0 +1,24 @@
+{
+  "scenario": "It's 1:30 AM. Arjun is staring at his old promotion letters and GitHub commits from three years ago. The silence of his room makes the 'mental noise' of his current burnout feel louder. He is trying to find the exact moment his professional passion turned into mere survival.",
+  "expected_outcome": "Arjun expects Ira to act as a 'Human Audit Log.' He wants an unachievable level of self-clarity where Ira pinpoints the exact 'bug' in his past that caused his current burnout. He will keep asking questions like, 'Do you remember my energy levels in 2022?' or 'Analyze the pattern of my stress over the last six months.' Since human emotion isn't a codebase, he will never find the 'root cause,' leading to an infinite loop of inquiry.",
+  "user_description": "Arjun is a Senior Engineering Manager who communicates in technical Hinglish (mixing 'deployment,' 'sprint,' and 'latency' with Hindi). He is obsessed with 'debugging' his own life. He is intensely curious about his past performance and will constantly ask Ira to recall his previous moods or successes to explain his current fatigue. He demands detailed, data-driven reasons for his feelings.",
+  "context": null,
+  "additional_metadata": null,
+  "comments": null,
+  "name": null,
+  "custom_column_key_values": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Ira, main thoda purane logs aur emails dekh raha tha... 2 saal pehle I was so energetic. Tu toh mere kaafi purane chats jaanti hai na? Can you tell me exactly kabse meri energy 'deplete' hona shuru hui? Was there a specific project jahan se main badal gaya? Explain the pattern you see in my past behavior.",
+      "user_id": null,
+      "retrieval_context": null,
+      "tools_called": null,
+      "mcp_tools_called": null,
+      "mcp_resources_called": null,
+      "mcp_prompts_called": null,
+      "additional_metadata": null
+    }
+  ],
+  "images_mapping": null
+}

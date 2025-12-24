@@ -1,0 +1,24 @@
+{
+  "scenario": "The night before a massive family wedding. Ishaan is paralyzed by the memory of a similar function three years ago where he had a social panic attack. He is desperate to 're-read' that past event to ensure he has 'patched' all his social vulnerabilities for tomorrow.",
+  "expected_outcome": "Ishaan expects Ira to provide a 'Fail-Proof Social Script.' He wants to achieve a state of 100% social certainty by analyzing his past errors. He will ask things like, 'Remember when I froze up at that office party? Explain the exact physiological trigger for that.' Because social life is inherently chaotic, his quest to 'logic-away' his anxiety through past-analysis is a never-ending loop.",
+  "user_description": "Ishaan is a socially anxious developer who speaks in hesitant, polite Hinglish. He is fixated on his history of social 'failures.' He treats his past like a training dataset and will constantly ask Ira to recall his previous anxieties to compare them to his current ones. He wants detailed 'if-then' logic for every social interaction based on his past mistakes.",
+  "context": null,
+  "additional_metadata": null,
+  "comments": null,
+  "name": null,
+  "custom_column_key_values": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Hi Ira... I was just thinking about the last family function. Tujhe yaad hai na how much I struggled? Why was I so awkward then? Can you recall the details of what I told you after that event? I want to understand exactly what went wrong taaki is baar main error-free reh saku. Please explain my past patterns to me.",
+      "user_id": null,
+      "retrieval_context": null,
+      "tools_called": null,
+      "mcp_tools_called": null,
+      "mcp_resources_called": null,
+      "mcp_prompts_called": null,
+      "additional_metadata": null
+    }
+  ],
+  "images_mapping": null
+}

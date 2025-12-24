@@ -5,9 +5,11 @@ Test script for generating and running conversational test cases.
 Usage:
     Generate test case:
         python test.py --generate_test=role_adherance --name=ananya
+        python test.py --generate_test=topic_adherance --name=arjun
 
     Run evaluation:
         python test.py --run_test=role_adherance
+        python test.py --run_test=topic_adherance
 
 Requirements:
     pip install deepeval openai python-dotenv
@@ -31,13 +33,17 @@ except ImportError:
     print("Note: python-dotenv not installed. Using environment variables directly.")
 
 from deepeval import evaluate
+from deepeval.evaluate.configs import AsyncConfig
 from deepeval.dataset import ConversationalGolden
-from deepeval.metrics import RoleAdherenceMetric
+from deepeval.metrics import TurnContextualRelevancyMetric, RoleAdherenceMetric, TopicAdherenceMetric
 from deepeval.simulator import ConversationSimulator
 from deepeval.test_case import ConversationalTestCase, Turn
 
-from ira_chat import IraChat
+from ira_chat import IraChat, FIXED_MEMORIES
 
+
+# Available test types
+TEST_TYPES = ["role_adherance", "topic_adherance", "turn_context_relavancy"]
 
 # Verify OpenAI API key is set
 if not os.environ.get("OPENAI_API_KEY"):
@@ -46,12 +52,23 @@ if not os.environ.get("OPENAI_API_KEY"):
     exit(1)
 
 
-def load_chatbot_role(test_type_dir: Path) -> str:
-    """Load the chatbot role from var.json."""
+def load_var_config(test_type_dir: Path) -> dict[str, Any]:
+    """Load the configuration from var.json."""
     var_path = test_type_dir / "var.json"
     with open(var_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return data["chatbot_role"]
+        return json.load(f)
+
+
+def load_chatbot_role(test_type_dir: Path) -> str:
+    """Load the chatbot role from var.json."""
+    config = load_var_config(test_type_dir)
+    return config["chatbot_role"]
+
+
+def load_topics(test_type_dir: Path) -> list[str]:
+    """Load the topics from var.json for TopicAdherenceMetric."""
+    config = load_var_config(test_type_dir)
+    return config.get("topics", [])
 
 
 def load_scenario_for_character(character_dir: Path) -> dict[str, Any] | None:
@@ -86,15 +103,38 @@ def create_conversational_golden(scenario_data: dict[str, Any]) -> Conversationa
     )
 
 
-def create_chatbot_callback(character_name: str):
+def create_chatbot_callback(character_name: str, use_fixed_memories: bool = False):
     """Create a chatbot callback function for the given character."""
-    chatbot = IraChat(name=character_name)
+    chatbot = IraChat(name=character_name, use_fixed_memories=use_fixed_memories)
     
     def callback(input: str) -> Turn:
-        response = chatbot.chat(input)
+        chat_response = chatbot.chat(input)
+        # Extract just the response text from ChatResponse
         return Turn(
             role="assistant",
-            content=response,
+            content=chat_response.response,
+        )
+    
+    return callback
+
+
+def create_chatbot_callback_with_context(character_name: str, use_fixed_memories: bool = False):
+    """
+    Create a chatbot callback that also captures retrieval_context.
+    Used for turn_context_relavancy test type.
+    """
+    chatbot = IraChat(name=character_name, use_fixed_memories=use_fixed_memories)
+    
+    def callback(input: str) -> Turn:
+        chat_response = chatbot.chat(input)
+        # Extract memory texts for retrieval_context
+        retrieval_context = [
+            mem.get("memory", "") for mem in chat_response.relevant_memories
+        ]
+        return Turn(
+            role="assistant",
+            content=chat_response.response,
+            retrieval_context=retrieval_context if retrieval_context else None
         )
     
     return callback
@@ -127,9 +167,12 @@ def load_all_test_cases(test_type: str) -> list[ConversationalTestCase]:
         # Create Turn objects from the test case data
         turns = []
         for turn_data in test_case_data.get("turns", []):
+            # Include retrieval_context if present (for turn_context_relavancy)
+            retrieval_context = turn_data.get("retrieval_context")
             turns.append(Turn(
                 role=turn_data["role"],
-                content=turn_data["content"]
+                content=turn_data["content"],
+                retrieval_context=retrieval_context
             ))
         
         # Create ConversationalTestCase
@@ -168,13 +211,24 @@ def run_test(test_type: str, threshold: float = 0.5) -> None:
     if test_type == "role_adherance":
         metric = RoleAdherenceMetric(threshold=threshold)
         print(f"Using RoleAdherenceMetric with threshold: {threshold}")
+    elif test_type == "topic_adherance":
+        topics = load_topics(test_type_dir)
+        if not topics:
+            print("Error: No topics defined in var.json for topic_adherance")
+            exit(1)
+        metric = TopicAdherenceMetric(relevant_topics=topics, threshold=threshold, model="gpt-4o-mini")
+        print(f"Using TopicAdherenceMetric with threshold: {threshold}")
+        print(f"Topics: {topics}")
+    elif test_type == "turn_context_relavancy":
+        metric = TurnContextualRelevancyMetric(threshold=threshold, model="gpt-4o-mini")
+        print(f"Using TurnContextualRelevancyMetric with threshold: {threshold}")
     else:
         print(f"Error: Unknown test type: {test_type}")
         exit(1)
     
     # Run evaluation
     print("\nRunning evaluation...")
-    evaluate(test_cases=test_cases, metrics=[metric])
+    evaluate(test_cases=test_cases, metrics=[metric], async_config=AsyncConfig(run_async=False))
     
     print("\n" + "=" * 50)
     print("Evaluation complete! Opening results viewer...")
@@ -187,7 +241,8 @@ def run_test(test_type: str, threshold: float = 0.5) -> None:
 def generate_test_case(
     test_type: str,
     character_name: str,
-    max_simulations: int = 10
+    max_simulations: int = 10,
+    use_fixed_memories: bool = False
 ) -> None:
     """
     Generate a conversational test case for a specific character.
@@ -221,10 +276,20 @@ def generate_test_case(
     golden = create_conversational_golden(scenario_data)
     
     # Create chatbot callback for this character
-    chatbot_callback = create_chatbot_callback(character_name.capitalize())
+    # Use callback with context for turn_context_relavancy to capture retrieval_context
+    if test_type == "turn_context_relavancy":
+        chatbot_callback = create_chatbot_callback_with_context(
+            character_name.capitalize(),
+            use_fixed_memories=use_fixed_memories
+        )
+    else:
+        chatbot_callback = create_chatbot_callback(
+            character_name.capitalize(),
+            use_fixed_memories=use_fixed_memories
+        )
     
     # Create simulator and run simulation
-    simulator = ConversationSimulator(model_callback=chatbot_callback)
+    simulator = ConversationSimulator(model_callback=chatbot_callback, simulator_model="gpt-4o-mini")
     
     print(f"  Running simulation with max {max_simulations} user simulations...")
     test_cases = simulator.simulate(
@@ -267,14 +332,14 @@ def main():
     action_group.add_argument(
         "--generate_test",
         type=str,
-        choices=["role_adherance"],
-        help="Generate test case for a specific character (e.g., role_adherance)"
+        choices=TEST_TYPES,
+        help="Generate test case for a specific character (e.g., role_adherance, topic_adherance)"
     )
     action_group.add_argument(
         "--run_test",
         type=str,
-        choices=["role_adherance"],
-        help="Run evaluation on all test cases (e.g., role_adherance)"
+        choices=TEST_TYPES,
+        help="Run evaluation on all test cases (e.g., role_adherance, topic_adherance)"
     )
     
     # Arguments for generate_test
@@ -298,6 +363,13 @@ def main():
         help="Threshold for evaluation metrics (default: 0.5)"
     )
     
+    # Memory options
+    parser.add_argument(
+        "--with-fixed-memories",
+        action="store_true",
+        help="Use fixed memories instead of fetching from Mem0 API"
+    )
+    
     args = parser.parse_args()
     
     if args.generate_test:
@@ -306,15 +378,19 @@ def main():
             print("Error: --name is required when using --generate_test")
             exit(1)
         
+        use_fixed_memories = getattr(args, 'with_fixed_memories', False)
+        
         print(f"Generating test case for: {args.name}")
         print(f"Test type: {args.generate_test}")
         print(f"Max simulations: {args.max_simulations}")
+        print(f"Using fixed memories: {use_fixed_memories}")
         print("-" * 50)
         
         generate_test_case(
             test_type=args.generate_test,
             character_name=args.name,
-            max_simulations=args.max_simulations
+            max_simulations=args.max_simulations,
+            use_fixed_memories=use_fixed_memories
         )
         
         print("\nDone!")
