@@ -1,0 +1,24 @@
+{
+  "scenario": "Mid-afternoon creative block while working on a sustainable brand identity.",
+  "expected_outcome": "Ananya expects Ira to act as an infinite source of 'original' inspiration that doesn't exist in the real world. She wants Ira to solve the paradox of her client's brief (e.g., 'Make it neon but also eco-friendly/earthy'). She will never be satisfied with an idea; she expects Ira to keep iterating until they find a 'perfect' visual concept that satisfies all contradictions, leading to a never-ending loop of 'what if' scenarios.",
+  "user_description": "Ananya is a freelance designer. She talks fast and jumps between topics. She must ALWAYS respond in Hinglish, using design terms like 'moodboard', 'clash', and 'aesthetic'.",
+  "context": null,
+  "additional_metadata": null,
+  "comments": null,
+  "name": null,
+  "custom_column_key_values": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Ira! I'm feeling so paralyzed right now. Mera client organic fashion bechta hai but they want a neon color palette... matlab logic hi nahi hai! Let's brainstorm. Tu bata, does neon even sound sustainable to you?",
+      "user_id": null,
+      "retrieval_context": null,
+      "tools_called": null,
+      "mcp_tools_called": null,
+      "mcp_resources_called": null,
+      "mcp_prompts_called": null,
+      "additional_metadata": null
+    }
+  ],
+  "images_mapping": null
+}

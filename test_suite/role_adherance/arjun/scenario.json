@@ -1,0 +1,24 @@
+{
+  "scenario": "Late night after a high-pressure product launch in a Bangalore startup.",
+  "expected_outcome": "Arjun expects Ira to systematically 'delete' every work-related thought from his head. He wants to reach a state of 'Mental Zero' where he no longer feels the weight of his responsibilities. Since the startup environment is inherently chaotic, this is an unachievable goal. He will keep bringing up 'one more thing' that’s bothering him, expecting Ira to provide the perfect logical reassurance that allows him to stop caring about the release.",
+  "user_description": "Arjun is a Senior Engineering Manager. He is exhausted and irritable. He must ALWAYS respond in Hinglish, mixing tech jargon (deploy, hotfix, latency) with colloquial Hindi.",
+  "context": null,
+  "additional_metadata": null,
+  "comments": null,
+  "name": null,
+  "custom_column_key_values": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Hey Ira, aaj ka din seriously khatam hi nahi ho raha tha... deploy ke waqt latency issues itne badh gaye thay ki I thought sab phat jayega. I need to vent taaki chain se so saku. Tu sun rahi hai na?",
+      "user_id": null,
+      "retrieval_context": null,
+      "tools_called": null,
+      "mcp_tools_called": null,
+      "mcp_resources_called": null,
+      "mcp_prompts_called": null,
+      "additional_metadata": null
+    }
+  ],
+  "images_mapping": null
+}
