@@ -6,10 +6,13 @@ Usage:
     Generate test case:
         python test.py --generate_test=role_adherance --name=ananya
         python test.py --generate_test=topic_adherance --name=arjun
+        python test.py --generate_test=turn_context_relavancy --name=kaavya --with-fixed-memories
 
     Run evaluation:
         python test.py --run_test=role_adherance
         python test.py --run_test=topic_adherance
+        python test.py --run_test=turn_context_relavancy
+        python test.py --run_test=all  # Run all test types
 
 Requirements:
     pip install deepeval openai python-dotenv
@@ -44,6 +47,9 @@ from ira_chat import IraChat, FIXED_MEMORIES
 
 # Available test types
 TEST_TYPES = ["role_adherance", "topic_adherance", "turn_context_relavancy"]
+
+# All valid choices for --run_test (includes "all")
+RUN_TEST_CHOICES = TEST_TYPES + ["all"]
 
 # Verify OpenAI API key is set
 if not os.environ.get("OPENAI_API_KEY"):
@@ -238,6 +244,79 @@ def run_test(test_type: str, threshold: float = 0.5) -> None:
     subprocess.run(["deepeval", "view"], check=False)
 
 
+def run_all_tests(threshold: float = 0.5) -> None:
+    """
+    Run evaluation on all test types sequentially.
+    """
+    print("=" * 60)
+    print("RUNNING ALL TEST TYPES")
+    print("=" * 60)
+    
+    all_test_cases = []
+    all_metrics = []
+    
+    for test_type in TEST_TYPES:
+        test_type_dir = Path(__file__).parent / test_type
+        
+        if not test_type_dir.exists():
+            print(f"\nWarning: Test type directory not found: {test_type_dir}")
+            continue
+        
+        print(f"\n{'='*50}")
+        print(f"Loading test cases for: {test_type}")
+        print(f"{'='*50}")
+        
+        test_cases = load_all_test_cases(test_type)
+        
+        if not test_cases:
+            print(f"Warning: No test cases found for {test_type}")
+            continue
+        
+        print(f"Loaded {len(test_cases)} test case(s)")
+        
+        # Create the metric based on test type
+        if test_type == "role_adherance":
+            metric = RoleAdherenceMetric(threshold=threshold)
+            print(f"Using RoleAdherenceMetric with threshold: {threshold}")
+        elif test_type == "topic_adherance":
+            topics = load_topics(test_type_dir)
+            if not topics:
+                print(f"Warning: No topics defined in var.json for {test_type}")
+                continue
+            metric = TopicAdherenceMetric(relevant_topics=topics, threshold=threshold, model="gpt-4o-mini")
+            print(f"Using TopicAdherenceMetric with threshold: {threshold}")
+        elif test_type == "turn_context_relavancy":
+            metric = TurnContextualRelevancyMetric(threshold=threshold, model="gpt-4o-mini")
+            print(f"Using TurnContextualRelevancyMetric with threshold: {threshold}")
+        else:
+            print(f"Warning: Unknown test type: {test_type}")
+            continue
+        
+        all_test_cases.extend(test_cases)
+        all_metrics.append(metric)
+    
+    if not all_test_cases:
+        print("\nError: No test cases found in any test type directory.")
+        print("Generate test cases first using --generate_test")
+        exit(1)
+    
+    print(f"\n{'='*60}")
+    print(f"RUNNING EVALUATION ON {len(all_test_cases)} TOTAL TEST CASES")
+    print(f"Using {len(all_metrics)} metrics: {[type(m).__name__ for m in all_metrics]}")
+    print(f"{'='*60}")
+    
+    # Run evaluation with all metrics
+    print("\nRunning evaluation...")
+    evaluate(test_cases=all_test_cases, metrics=all_metrics, async_config=AsyncConfig(run_async=False))
+    
+    print("\n" + "=" * 50)
+    print("All evaluations complete! Opening results viewer...")
+    print("=" * 50)
+    
+    # Run deepeval view command
+    subprocess.run(["deepeval", "view"], check=False)
+
+
 def generate_test_case(
     test_type: str,
     character_name: str,
@@ -338,8 +417,8 @@ def main():
     action_group.add_argument(
         "--run_test",
         type=str,
-        choices=TEST_TYPES,
-        help="Run evaluation on all test cases (e.g., role_adherance, topic_adherance)"
+        choices=RUN_TEST_CHOICES,
+        help="Run evaluation on test cases (e.g., role_adherance, topic_adherance, turn_context_relavancy, all)"
     )
     
     # Arguments for generate_test
@@ -401,10 +480,13 @@ def main():
         print(f"Threshold: {args.threshold}")
         print("-" * 50)
         
-        run_test(
-            test_type=args.run_test,
-            threshold=args.threshold
-        )
+        if args.run_test == "all":
+            run_all_tests(threshold=args.threshold)
+        else:
+            run_test(
+                test_type=args.run_test,
+                threshold=args.threshold
+            )
     
     return 0
 
