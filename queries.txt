@@ -5,8 +5,7 @@
 WITH __resource_filter AS (
     SELECT fingerprint
     FROM signoz_traces.distributed_traces_v3_resource
-    WHERE seen_at_ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
-          AND toUInt64(toUnixTimestamp(now()))
+    WHERE seen_at_ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp
 )
 SELECT 
     toStartOfInterval(timestamp, INTERVAL 1 SECOND) AS ts,
@@ -15,14 +14,11 @@ FROM
     signoz_traces.distributed_signoz_index_v3
 WHERE 
     resource_fingerprint GLOBAL IN __resource_filter AND
-    timestamp BETWEEN toStartOfDay(now()) AND now() AND
-    ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
-                     AND toUInt64(toUnixTimestamp(now())) AND
+    timestamp BETWEEN {{.start_datetime}} AND {{.end_datetime}} AND
+    ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp AND
     attributes_string['gen_ai.operation.name'] = 'chat' AND
     has(attributes_number, 'metrics.ttfb')
 ORDER BY ts ASC;
-
-
 
 
 ########## TTS TTFB (Summary query) ##########
@@ -30,8 +26,7 @@ ORDER BY ts ASC;
 WITH __resource_filter AS (
     SELECT fingerprint
     FROM signoz_traces.distributed_traces_v3_resource
-    WHERE seen_at_ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
-          AND toUInt64(toUnixTimestamp(now()))
+    WHERE seen_at_ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp
 )
 SELECT 
     toStartOfInterval(timestamp, INTERVAL 1 SECOND) AS ts,
@@ -40,9 +35,8 @@ FROM
     signoz_traces.distributed_signoz_index_v3
 WHERE 
     resource_fingerprint GLOBAL IN __resource_filter AND
-    timestamp BETWEEN toStartOfDay(now()) AND now() AND
-    ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
-                     AND toUInt64(toUnixTimestamp(now())) AND
+    timestamp BETWEEN {{.start_datetime}} AND {{.end_datetime}} AND
+    ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp AND
     attributes_string['gen_ai.operation.name'] = 'tts' AND
     has(attributes_number, 'metrics.ttfb')
 ORDER BY ts ASC;
@@ -54,8 +48,7 @@ ORDER BY ts ASC;
 WITH __resource_filter AS (
     SELECT fingerprint
     FROM signoz_traces.distributed_traces_v3_resource
-    WHERE seen_at_ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
-          AND toUInt64(toUnixTimestamp(now()))
+    WHERE seen_at_ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp
 )
 SELECT 
     toStartOfInterval(timestamp, INTERVAL 1 SECOND) AS ts,
@@ -64,12 +57,12 @@ FROM
     signoz_traces.distributed_signoz_index_v3
 WHERE 
     resource_fingerprint GLOBAL IN __resource_filter AND
-    timestamp BETWEEN toStartOfDay(now()) AND now() AND
-    ts_bucket_start BETWEEN toUInt64(toUnixTimestamp(toStartOfDay(now()))) - 1800 
-                     AND toUInt64(toUnixTimestamp(now())) AND
+    timestamp BETWEEN {{.start_datetime}} AND {{.end_datetime}} AND
+    ts_bucket_start BETWEEN $start_timestamp - 1800 AND $end_timestamp AND
     attributes_string['gen_ai.operation.name'] = 'stt' AND
     has(attributes_number, 'metrics.ttfb')
 ORDER BY ts ASC;
+
 
 ########## Bot-speaking to User-speaking Time Gap (Frequency Histogram) ##########
 
